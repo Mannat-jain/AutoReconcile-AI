@@ -1,0 +1,14 @@
+{
+  "name": "auto-reconcile-ai",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AutoReconcile AI — Autonomous Invoice-to-Payout Reconciliation Engine (Razorpay AI Builder Internship 2026, Track 4)",
+  "scripts": {
+    "frontend:install": "npm install --prefix frontend",
+    "frontend:dev": "npm run dev --prefix frontend",
+    "frontend:build": "npm run build --prefix frontend",
+    "backend:install": "pip install -r backend/requirements.txt",
+    "backend:dev": "cd backend && uvicorn main:app --reload --port 8000",
+    "sample-data:regenerate": "cd sample_data && python3 generate_invoices.py"
+  }
+}

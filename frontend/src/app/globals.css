@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+:root {
+  /* Ledger-dark palette: deep ink navy, not pure black; warm gold "stamp" accent */
+  --color-ink: #0B0F1A;         /* app background */
+  --color-ink-raised: #10162A;  /* panels/cards */
+  --color-ink-line: #1E2740;    /* hairline borders/dividers */
+  --color-paper: #E7EAF2;       /* primary text */
+  --color-paper-dim: #8A93AC;   /* secondary/muted text */
+  --color-gold: #E8B94A;        /* primary accent — ledger stamp gold */
+  --color-gold-dim: #7A6329;
+  --color-good: #4ADE9E;        /* matched / auto-paid */
+  --color-warn: #F2B84B;        /* flagged */
+  --color-bad: #F0715C;         /* exception */
+  --color-info: #6FA8F5;
+
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-ledger: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+@theme inline {
+  --color-ink: var(--color-ink);
+  --color-ink-raised: var(--color-ink-raised);
+  --color-ink-line: var(--color-ink-line);
+  --color-paper: var(--color-paper);
+  --color-paper-dim: var(--color-paper-dim);
+  --color-gold: var(--color-gold);
+  --color-gold-dim: var(--color-gold-dim);
+  --color-good: var(--color-good);
+  --color-warn: var(--color-warn);
+  --color-bad: var(--color-bad);
+  --color-info: var(--color-info);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-ledger: var(--font-ledger);
+}
+
+* {
+  border-color: var(--color-ink-line);
+}
+
+body {
+  background-image:
+    linear-gradient(180deg, rgba(232, 185, 74, 0.04), transparent 320px);
+}
+
+::selection {
+  background: rgba(232, 185, 74, 0.25);
+}
+
+/* subtle ruled-ledger background texture on the main canvas */
+.ledger-rule {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 27px,
+    var(--color-ink-line) 27px,
+    var(--color-ink-line) 28px
+  );
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
