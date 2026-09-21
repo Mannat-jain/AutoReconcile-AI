@@ -185,7 +185,7 @@ Invoice text:
 
 def llm_vision_extract(pdf_path: str) -> ExtractedInvoice:
     """
-    Vision-LLM extraction path (used when OPENAI_API_KEY is configured).
+    LLM extraction path (sends the pdfplumber text, not page images) (used when OPENAI_API_KEY is configured).
     Sends extracted text to GPT-4o with a strict JSON schema instruction,
     then verifies numeric fields against the source text before trusting
     them (hallucination guardrail — see ARCHITECTURE.md).

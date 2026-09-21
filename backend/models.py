@@ -19,7 +19,7 @@ class LineItem(BaseModel):
 
 
 class ExtractedInvoice(BaseModel):
-    """Structured output of the Vision-LLM / OCR extraction stage."""
+    """Structured output of the LLM / OCR extraction stage."""
     source_file: str
     vendor_name: Optional[str] = None
     gstin: Optional[str] = None
@@ -53,6 +53,7 @@ class ReconciliationResult(BaseModel):
     source_file: str
     invoice_number: str
     vendor_name: Optional[str]
+    vendor_gstin: Optional[str] = None     # vendor identity used in the payout idempotency key
     invoice_total: Optional[float]
     razorpay_amount: Optional[float]
     bank_amount: Optional[float]
@@ -68,6 +69,8 @@ class ReconciliationResult(BaseModel):
 
 class PayoutRequest(BaseModel):
     invoice_number: str
+    vendor_id: Optional[str] = None       # GSTIN (preferred) or vendor name - part of the idempotency key
+    currency: str = "INR"
     beneficiary_name: str
     account_number: str
     ifsc: str
@@ -85,3 +88,10 @@ class PayoutResponse(BaseModel):
     fees: float
     tax: float
     mock: bool = True
+
+
+class ApprovalRequest(BaseModel):
+    """Body of POST /api/payout/trigger - a human reviewer explicitly approving one payout."""
+    record_id: str
+    approved_by: str = Field(min_length=1, max_length=100)
+    note: Optional[str] = Field(default=None, max_length=500)

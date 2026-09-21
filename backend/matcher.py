@@ -27,16 +27,18 @@ from __future__ import annotations
 
 import os
 import csv
-from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Optional
 
 from rapidfuzz import fuzz
 
 from models import ExtractedInvoice, ReconciliationResult, AnomalyFlag
 
-AMOUNT_TOLERANCE = 0.02          # 2% tolerance before flagging a price mismatch
+# Relative tolerance before an invoice/settlement amount difference is flagged. 0.5% by default (rounding,
+# paise-level differences); configurable because acceptable variance is a business decision.
+AMOUNT_TOLERANCE = Decimal(os.getenv("AMOUNT_TOLERANCE", "0.005"))
 NAME_FUZZY_THRESHOLD = 80        # rapidfuzz token_sort_ratio threshold
-AUTO_PAYOUT_CONFIDENCE = 0.95    # >0.95 triggers autonomous payout
+AUTO_PAYOUT_CONFIDENCE = float(os.getenv("AUTO_PAYOUT_CONFIDENCE", "0.95"))   # >0.95 triggers autonomous payout
 
 
 def load_csv(path: str) -> list[dict]:
@@ -55,6 +57,11 @@ def _find_bank_record(utr: Optional[str], bank_rows: list[dict]) -> Optional[dic
         if r.get("utr_ref") == utr:
             return r
     return None
+
+
+def _d(value) -> Decimal:
+    """Money is compared as Decimal (via str) so binary-float noise like 0.1 + 0.2 can never decide a match."""
+    return Decimal(str(value))
 
 
 def _name_similarity(a: Optional[str], b: Optional[str]) -> float:
@@ -87,6 +94,7 @@ def reconcile_invoice(
             source_file=invoice.source_file,
             invoice_number=invoice_no,
             vendor_name=invoice.vendor_name,
+            vendor_gstin=invoice.gstin,
             invoice_total=invoice.total_payable,
             razorpay_amount=None,
             bank_amount=None,
@@ -143,27 +151,26 @@ def reconcile_invoice(
             ),
         ))
 
-    # --- Amount comparison: invoice vs Razorpay log ---
+    # --- Amount comparison: invoice vs Razorpay log (Decimal arithmetic) ---
     invoice_total = invoice.total_payable or 0.0
-    amount_diff_ratio = (
-        abs(invoice_total - razorpay_amount) / invoice_total if invoice_total else 1.0
-    )
+    inv_d, rp_d = _d(invoice_total), _d(razorpay_amount)
+    amount_diff_ratio = abs(inv_d - rp_d) / inv_d if inv_d else Decimal(1)
 
     if amount_diff_ratio > AMOUNT_TOLERANCE:
         # Special-case: could be an undisclosed TDS deduction rather than a
         # genuine price mismatch. Detect the pattern: razorpay_amount is
         # ~ (invoice_total * (1 - common TDS rates)).
         tds_explained = False
-        for tds_rate in (0.10, 0.02, 0.01, 0.05):
-            expected_net = invoice_total * (1 - tds_rate)
-            if abs(expected_net - razorpay_amount) / expected_net < AMOUNT_TOLERANCE:
+        for tds_rate in (Decimal("0.10"), Decimal("0.02"), Decimal("0.01"), Decimal("0.05")):
+            expected_net = inv_d * (1 - tds_rate)
+            if abs(expected_net - rp_d) / expected_net < AMOUNT_TOLERANCE:
                 anomalies.append(AnomalyFlag(
                     code="MISSING_TDS_ON_INVOICE",
                     severity="medium",
                     message=(
                         f"Invoice does not show a TDS deduction, but the settled amount "
                         f"(₹{razorpay_amount:,.2f}) matches invoice total minus "
-                        f"{int(tds_rate*100)}% TDS (expected ₹{expected_net:,.2f}). "
+                        f"{int(tds_rate*100)}% TDS (expected ₹{float(expected_net):,.2f}). "
                         f"Vendor invoice should be reissued reflecting TDS u/s 194J/194C."
                     ),
                 ))
@@ -176,12 +183,12 @@ def reconcile_invoice(
                 message=(
                     f"Invoice total (₹{invoice_total:,.2f}) differs from Razorpay "
                     f"settlement amount (₹{razorpay_amount:,.2f}) by "
-                    f"{amount_diff_ratio*100:.1f}%, exceeding the {AMOUNT_TOLERANCE*100:.0f}% tolerance."
+                    f"{float(amount_diff_ratio)*100:.1f}%, exceeding the {float(AMOUNT_TOLERANCE)*100:.1f}% tolerance."
                 ),
             ))
 
     # --- Amount comparison: Razorpay log vs actual Bank debit ---
-    if bank_amount is not None and abs(bank_amount - razorpay_amount) > 0.01:
+    if bank_amount is not None and abs(_d(bank_amount) - rp_d) > Decimal("0.01"):
         anomalies.append(AnomalyFlag(
             code="BANK_RAZORPAY_AMOUNT_MISMATCH",
             severity="high",
@@ -190,7 +197,9 @@ def reconcile_invoice(
                 f"records ₹{razorpay_amount:,.2f} for this payout."
             ),
         ))
-    elif bank_amount is None:
+    elif bank_amount is None and primary.get("status") == "processed":
+        # A bank debit is only expected once the payout has settled. A queued payout that has not been
+        # released yet legitimately has no bank line - penalising it would make autonomous release impossible.
         anomalies.append(AnomalyFlag(
             code="NO_BANK_CONFIRMATION",
             severity="medium",
@@ -218,6 +227,7 @@ def reconcile_invoice(
         source_file=invoice.source_file,
         invoice_number=invoice_no,
         vendor_name=invoice.vendor_name,
+        vendor_gstin=invoice.gstin,
         invoice_total=invoice.total_payable,
         razorpay_amount=razorpay_amount,
         bank_amount=bank_amount,

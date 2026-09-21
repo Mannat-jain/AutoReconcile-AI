@@ -5,6 +5,9 @@ import { ChevronDown, ChevronUp, Zap, AlertTriangle, RefreshCw } from "lucide-re
 import { api, ReconciliationResult, formatINR } from "@/lib/api";
 import StatusPill from "@/components/StatusPill";
 
+// Mirrors CRITICAL_ANOMALY_CODES in backend/main.py: approving these needs a written justification.
+const CRITICAL_ANOMALIES = new Set(["BANK_DETAILS_MISMATCH", "DUPLICATE_INVOICE_SUBMISSION", "DUPLICATE_PAYOUT_RECORD"]);
+
 const SEVERITY_COLOR: Record<string, string> = {
   low: "text-info",
   medium: "text-warn",
@@ -18,6 +21,7 @@ export default function ReconciliationPage() {
   const [payingOut, setPayingOut] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "exception" | "flagged" | "matched">("all");
 
+  // Called from event handlers only (a click); the initial load lives in the effect below.
   const load = (refresh = false) => {
     setLoading(true);
     api
@@ -26,12 +30,29 @@ export default function ReconciliationPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => load(), []);
+  useEffect(() => {
+    let active = true;
+    api
+      .reconcileRun(false)
+      .then((data) => active && setResults(data))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const approvePayout = async (recordId: string) => {
+  const approvePayout = async (r: ReconciliationResult) => {
+    const approver = window.prompt("Reviewer name or email (recorded in the audit log):")?.trim();
+    if (!approver) return;
+    let note: string | undefined;
+    if (r.anomalies.some((a) => CRITICAL_ANOMALIES.has(a.code))) {
+      note = window.prompt("High-risk anomaly present. Justification for approving (min. 10 characters):")?.trim();
+      if (!note) return;
+    }
+    const recordId = r.record_id;
     setPayingOut(recordId);
     try {
-      await api.triggerPayout(recordId);
+      await api.triggerPayout(recordId, approver, note);
       load(true);
     } catch (e) {
       alert(`Payout failed: ${e}`);
@@ -149,7 +170,7 @@ export default function ReconciliationPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            approvePayout(r.record_id);
+                            approvePayout(r);
                           }}
                           disabled={payingOut === r.record_id}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gold/10 text-gold text-[11.5px] font-medium hover:bg-gold/20 disabled:opacity-50"

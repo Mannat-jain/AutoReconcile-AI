@@ -47,7 +47,7 @@ a handful of vendors a week.
 ### Prerequisites
 - Python 3.10+
 - Node.js 18.18+ and npm
-- (Optional) an OpenAI API key, if you want to exercise the live Vision-LLM
+- (Optional) an OpenAI API key, if you want to exercise the live LLM (GPT-4o)
   extraction path instead of the bundled offline OCR extractor.
 
 ### 2.1 Clone & configure
@@ -61,7 +61,7 @@ cp .env.example frontend/.env.local   # keep only NEXT_PUBLIC_API_BASE_URL
 The project runs **entirely offline with zero API keys** — Razorpay payouts
 run in a realistic mock mode, and invoice extraction falls back to a
 deterministic OCR/regex parser (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-for how that stays faithful to a real Vision-LLM pipeline).
+for how that stays faithful to a real LLM extraction pipeline).
 
 ### 2.2 Run the backend (FastAPI)
 
@@ -90,11 +90,11 @@ npm run dev
 ```
 
 Open **http://localhost:3000**. You should land on the Executive Dashboard,
-already populated from the 5 bundled sample invoices.
+already populated from the 7 bundled sample invoices.
 
 ### 2.4 Regenerating the sample invoices (optional)
 
-The 6 demo PDFs in `sample_data/invoices/` are pre-generated and committed,
+The first 6 demo PDFs in `sample_data/invoices/` are pre-generated and committed,
 but you can regenerate them (e.g. after editing the anomaly scenarios) with:
 
 ```bash
@@ -111,7 +111,7 @@ python3 generate_invoices.py
  Invoice (PDF/img)
         │
         ▼
- ┌──────────────────┐   Vision-LLM (GPT-4o) if OPENAI_API_KEY set,
+ ┌──────────────────┐   LLM (GPT-4o, on pdfplumber text) if key set,
  │  parser.py        │   else deterministic OCR/regex fallback.
  │  (Ingestion)       │   Every numeric field is re-verified against
  └──────────────────┘   the raw source text before being trusted.
@@ -126,25 +126,32 @@ python3 generate_invoices.py
    confidence > 0.95? ──No──► Exception Review Queue (human approves)
         │ Yes
         ▼
- ┌──────────────────┐   Idempotency-keyed, append-only audit log
- │ razorpay_service.py│  (payout_audit_log.jsonl). Refuses to fire below
- │ (Autonomous payout)│  the confidence gate — no silent retries.
- └──────────────────┘
+ ┌──────────────────┐   Durable idempotency ledger (SQLite, atomic INSERT)
+ │ razorpay_service.py│  + hash-chained append-only audit log (JSONL).
+ │ (Autonomous payout)│  Refuses to fire at/below the confidence gate unless
+ └──────────────────┘   a NAMED human approves — no silent retries.
 ```
 
 **Failure handling principles baked into the pipeline:**
 
-- **Never crash on a bad document.** If Vision-LLM extraction fails or
+- **Never crash on a bad document.** If LLM extraction fails or
   returns malformed JSON, `parser.py` degrades gracefully to the
   deterministic OCR extractor rather than dropping the invoice.
 - **Never guess when unsure.** Anything that isn't a clean, high-confidence
-  3-way match is routed to a human — the system has no code path that pays
-  a low-confidence invoice automatically.
-- **Never pay twice.** Every payout attempt is keyed by an idempotency hash
-  of `(invoice_number, amount)`; duplicate attempts are refused, not retried.
-- **Never lose the paper trail.** Every payout attempt — successful, blocked,
-  or duplicate-suppressed — is appended to an immutable JSONL audit log,
-  viewable live from the "API logs" button in the app.
+  3-way match is routed to a human. The confidence gate lives inside the payout
+  layer and the confidence value is never taken from a client: the only way
+  past it is an explicit approval that names the reviewer (and, for high-risk
+  anomalies such as a bank-details mismatch, a written justification).
+- **Never pay twice.** Every payout is keyed by `sha256(vendor, invoice number,
+  amount, currency)` and the key is claimed with one atomic `INSERT` into a durable
+  SQLite ledger (`payout_store.py`). Retries, double clicks, concurrent requests and
+  server restarts cannot create a second payout; a *failed* payout releases its key so
+  it can be retried, and payouts that were already settled are never paid again.
+- **Never lose the paper trail.** Every payout decision — executed, blocked,
+  duplicate-suppressed, failed, human-approved — is appended to a JSONL audit log
+  in which each entry carries the hash of the previous one (`audit.py`). Editing or
+  deleting history breaks the chain, which `GET /api/audit-log/verify` detects.
+  Viewable live from the "API logs" button in the app.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full deep-dive,
 including the deterministic-vs-LLM rulebook and security posture.
@@ -169,8 +176,9 @@ auto-reconcile-ai/
 ├── README.md                    ← you are here
 ├── .env.example
 ├── sample_data/
-│   ├── generate_invoices.py     (regenerates the 6 demo PDFs)
-│   ├── invoices/                (5 vendors, 6 files incl. 1 duplicate)
+│   ├── generate_invoices.py     (regenerates the first 6 demo PDFs)
+│   ├── invoices/                (6 vendors, 7 files incl. 1 duplicate;
+│   │                             INV-1006 is the clean, queued invoice that auto-pays)
 │   ├── razorpay_payouts_log.csv
 │   └── bank_statement.csv
 ├── backend/
@@ -178,7 +186,10 @@ auto-reconcile-ai/
 │   ├── models.py                (Pydantic schemas)
 │   ├── parser.py                (ingestion & extraction)
 │   ├── matcher.py                (3-way matching & anomaly detection)
-│   ├── razorpay_service.py      (mock Payouts API client)
+│   ├── razorpay_service.py      (mock Payouts API client: gate + idempotency + audit)
+│   ├── payout_store.py          (durable idempotency ledger, SQLite)
+│   ├── audit.py                 (append-only, hash-chained audit log)
+│   ├── tests/                   (43 pytest tests)
 │   └── requirements.txt
 ├── frontend/                    (Next.js 16 / React / Tailwind)
 │   └── src/app/{page,ingestion,reconciliation,architecture}
@@ -189,11 +200,38 @@ auto-reconcile-ai/
 
 ## 6. Known Limitations of this Proof of Concept
 
-- Extraction is tuned to the layout of the bundled sample invoices; a
-  production system would need a more general Vision-LLM prompt (already
-  stubbed in `parser.py::llm_vision_extract`) plus a broader eval set.
+- Extraction is tuned to the layout of the bundled sample invoices; the optional
+  GPT-4o path sends the *text* extracted by pdfplumber (it is not a true vision
+  pipeline), so a production system would need image input, a more general prompt
+  and a broader eval set.
 - `razorpay_service.py` runs in mock mode by default; live RazorpayX wiring
   is stubbed but intentionally not implemented against real credentials.
-- Reconciliation state lives in-process (an in-memory cache in `main.py`)
-  rather than a database — sufficient for a demo, not for production
-  concurrency.
+- Reconciliation *results* live in an in-process cache (`main.py`); the payout ledger
+  and audit log are durable, but a production system would keep everything in a real
+  database.
+- The audit log is tamper-**evident**, not tamper-**proof**: someone with write access
+  could rewrite the whole file. Ship entries to write-once storage (see ARCHITECTURE.md).
+- The review UI has no authentication; `approved_by` is self-declared. A real deployment
+  needs SSO/RBAC and maker-checker approval for large payouts.
+- Money is compared with `Decimal`, but the API models still carry `float` for JSON
+  convenience; a production ledger should use integer minor units (paise).
+
+## 7. Tests & CI
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest            # 43 tests
+cd ../frontend && npm ci && npm run lint && npm run build
+```
+
+The suite pins the behaviours that matter for a system that moves money: an already-settled
+invoice is never paid again; the confidence gate cannot be bypassed from the API; concurrent
+identical payouts pay exactly once; a failed payout can be retried; the ledger survives a
+restart; the audit chain detects edits and deletions; uploads cannot escape `uploads/`.
+GitHub Actions runs both suites on every push (`.github/workflows/ci.yml`).
+
+### Try the autonomous path
+`INV-1006` (Apex Analytics) has a clean 3-way match and a *queued* payout, so confidence is
+1.0 and the system releases the payout by itself (mock mode) - exactly once, even if you click
+"Re-run reconciliation" repeatedly. Every other invoice is either already settled or needs a human.

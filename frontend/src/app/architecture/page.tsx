@@ -40,7 +40,7 @@ export default function ArchitecturePage() {
         <h2 className="font-display font-semibold text-[22px] text-paper">Architecture &amp; pipeline flow</h2>
         <p className="text-[13px] text-paper-dim mt-1 max-w-2xl">
           What actually happens between a PDF landing in the inbox and money leaving the account —
-          worth having open if someone asks "wait, how does it decide?"
+          worth having open if someone asks &quot;wait, how does it decide?&quot;
         </p>
       </div>
 

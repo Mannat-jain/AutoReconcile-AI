@@ -23,7 +23,7 @@ AutoReconcile AI splits the pipeline explicitly:
 
 | Decision | Mechanism | Why |
 |---|---|---|
-| Does invoice total match Razorpay settlement amount? | Deterministic (`abs(diff)/total > 2%`) | Purely numeric; must be reproducible & auditable |
+| Does invoice total match Razorpay settlement amount? | Deterministic (`abs(diff)/total > tolerance`, default 0.5%, env `AMOUNT_TOLERANCE`, computed with `Decimal`) | Purely numeric; must be reproducible & auditable |
 | Do invoice bank account/IFSC match Razorpay beneficiary record? | Deterministic (exact string equality) | Security-critical — no fuzziness allowed here at all |
 | Is this settlement pattern explainable by an undisclosed TDS deduction? | Deterministic (checks against known TDS rates: 1%, 2%, 5%, 10%) | A closed, enumerable rule set; still no LLM needed |
 | Does "CloudNine Hosting Pvt Ltd" on the invoice match "CloudNine Hosting Pvt. Ltd." in the Razorpay log? | Fuzzy (`rapidfuzz.fuzz.token_sort_ratio`) | Genuinely benefits from tolerant string matching; low stakes if imprecise (it only nudges confidence, never gates a bank-detail check) |
@@ -46,7 +46,7 @@ work is front-loaded there.
 
 ### 2.1 Strict schema enforcement
 `parser.py` never returns free text. Whether extraction runs via the
-deterministic OCR path or the optional GPT-4o Vision path, the output is
+deterministic OCR path or the optional GPT-4o (text-based) path, the output is
 always coerced into the `ExtractedInvoice` Pydantic model
 (`backend/models.py`). Any field the model can't populate is `null` rather
 than a fabricated guess — a missing GSTIN shows up as `null`, not as an
@@ -89,19 +89,35 @@ notes on what a production hardening pass would add on top.
 ### Implemented in this repo
 
 - **Confidence-gated autonomy.** `razorpay_service.create_payout()` raises
-  `PermissionError` and refuses to fire if `confidence_score <=
-  0.95` — this check lives in the payout service itself, not just in the
-  caller, so no code path can bypass it by mistake.
-- **Idempotency keys.** Every payout attempt is keyed by
-  `sha256(invoice_number:amount)`. A retried or duplicated call for the same
-  invoice/amount pair is rejected outright rather than firing a second
-  transfer.
-- **Immutable audit log.** Every payout attempt — executed, blocked for low
-  confidence, or suppressed as a duplicate — is appended to
-  `payout_audit_log.jsonl`. Nothing is ever overwritten or deleted from this
-  log within the application; it's designed to be shipped to a proper
-  append-only store (e.g. a WORM S3 bucket or an audit database) in
-  production.
+  `PermissionError` and refuses to fire an *autonomous* payout if
+  `confidence_score <= 0.95`. The check lives in the payout service itself and the
+  confidence value is computed server-side - the HTTP API does **not** accept it from
+  the client (an earlier version exposed an `override_confidence` query parameter that
+  defaulted to 1.0 and therefore bypassed the gate; that has been removed). The only way
+  past the gate is a human approval that carries `approved_by`, which is recorded in the
+  audit log. High-risk anomalies (`BANK_DETAILS_MISMATCH`, duplicate invoice/payout) also
+  require a written justification, and already-settled invoices can never be paid again.
+- **Idempotency keys + durable ledger.** The key is
+  `sha256(canonical_json(vendor, invoice_number, amount, currency))`. The vendor is part of
+  the key because invoice numbers are only unique per vendor. The key is claimed with a
+  single atomic `INSERT` into a SQLite ledger (`payout_store.py`, key = PRIMARY KEY), so
+  concurrent requests race safely (exactly one wins) and the guarantee survives restarts.
+  Lifecycle: `PENDING -> PAID`, or `PENDING -> FAILED -> PENDING` (a failed attempt can
+  be retried; a `PENDING` row left by a crash is *not* retried blindly because the gateway
+  may already have paid - it needs reconciliation). The same key should be sent to the
+  gateway as its own idempotency header for end-to-end safety.
+- **Append-only, tamper-evident audit log.** Every decision (executed, blocked, duplicate,
+  failed, human approval) is one JSON line, written with `O_APPEND` + `fsync`. Each entry
+  stores the previous entry's hash and its own SHA-256 over `prev_hash + content`;
+  `GET /api/audit-log/verify` re-walks the chain and reports the first broken line.
+  This detects edits, deletions and re-ordering; it cannot stop someone with write access
+  from rewriting the *entire* file, so production should also ship entries to write-once
+  storage or anchor the latest hash externally.
+- **Upload hardening.** `POST /api/extract` accepts only `.pdf` files whose content starts
+  with `%PDF-`, at most 5 MB, and never uses the client's filename as a path (it is
+  sanitised and prefixed with a random id) - `../../x.pdf` cannot escape `uploads/`.
+- **Explicit CORS origins.** `ALLOWED_ORIGINS` (default `http://localhost:3000`), no wildcard,
+  no credentials.
 - **Explicit account/IFSC equality checks.** Bank-detail verification never
   uses fuzzy matching — a single-character difference in an account number
   or IFSC code is always treated as a hard mismatch (`BANK_DETAILS_MISMATCH`,
@@ -144,10 +160,7 @@ notes on what a production hardening pass would add on top.
   webhooks for settlement confirmation, verify webhook signatures
   (`X-Razorpay-Signature`) on every inbound event and rate-limit the public
   API surface.
-- **CORS lockdown.** `main.py` currently allows `*` origins for local demo
-  convenience (`app.add_middleware(CORSMiddleware, allow_origins=["*"])`) —
-  this must be restricted to the deployed frontend's exact origin in
-  production.
+- **Deploy-time CORS.** Set `ALLOWED_ORIGINS` to the deployed frontend's exact origin.
 
 ---
 
@@ -162,7 +175,8 @@ penalty = Σ over anomalies of:
 confidence_score = clamp(base − penalty, 0.0, 1.0)
 
 status:
-  confidence_score > 0.95            → auto_paid / matched
+  confidence_score > 0.95            → auto_paid  (payout still queued: released by the system)
+                                       matched    (payout already settled: nothing to do)
   else, any HIGH-severity anomaly    → exception  (Exception Review Queue)
   else                               → flagged    (quick human review)
 ```

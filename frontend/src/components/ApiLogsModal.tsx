@@ -18,7 +18,15 @@ export default function ApiLogsModal({ open, onClose }: { open: boolean; onClose
   };
 
   useEffect(() => {
-    if (open) load();
+    if (!open) return;
+    let active = true;
+    api
+      .auditLog()
+      .then((data) => active && setLogs(data))
+      .catch(() => active && setLogs([]));
+    return () => {
+      active = false;
+    };
   }, [open]);
 
   if (!open) return null;
@@ -30,7 +38,7 @@ export default function ApiLogsModal({ open, onClose }: { open: boolean; onClose
         <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
           <div>
             <h3 className="font-display font-semibold text-[14px] text-paper">Razorpay Payouts API — raw log</h3>
-            <p className="text-[11.5px] text-paper-dim">payout_audit_log.jsonl · append-only, per payout attempt</p>
+            <p className="text-[11.5px] text-paper-dim">payout_audit_log.jsonl · append-only, hash-chained, per payout decision</p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={load} className="p-1.5 rounded-md text-paper-dim hover:text-gold hover:bg-white/5">

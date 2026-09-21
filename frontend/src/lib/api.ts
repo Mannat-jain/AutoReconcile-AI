@@ -91,10 +91,18 @@ export const api = {
   reconcileRun: (refresh = false) =>
     fetch(`${API_BASE}/api/reconcile/run${refresh ? "?refresh=true" : ""}`, { cache: "no-store" }).then((r) => j<ReconciliationResult[]>(r)),
   dashboardMetrics: () => fetch(`${API_BASE}/api/dashboard/metrics`, { cache: "no-store" }).then((r) => j<DashboardMetrics>(r)),
-  triggerPayout: (recordId: string) =>
-    fetch(`${API_BASE}/api/payout/trigger?record_id=${encodeURIComponent(recordId)}&override_confidence=1.0`, {
+  // A human approves ONE payout. The server enforces the confidence gate itself, so the client only
+  // identifies the reviewer (recorded in the audit log) and, for high-risk anomalies, gives a reason.
+  triggerPayout: (recordId: string, approvedBy: string, note?: string) =>
+    fetch(`${API_BASE}/api/payout/trigger`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ record_id: recordId, approved_by: approvedBy, note }),
     }).then((r) => j<Record<string, unknown>>(r)),
+  verifyAuditLog: () =>
+    fetch(`${API_BASE}/api/audit-log/verify`, { cache: "no-store" }).then((r) =>
+      j<{ valid: boolean; entries: number; broken_at: number | null; reason: string }>(r)
+    ),
   auditLog: () => fetch(`${API_BASE}/api/audit-log`, { cache: "no-store" }).then((r) => j<AuditLogEntry[]>(r)),
 };
 

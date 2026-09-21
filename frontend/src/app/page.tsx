@@ -29,7 +29,7 @@ export default function DashboardPage() {
   }, []);
 
   if (error) return <BackendOfflineNotice error={error} />;
-  if (!metrics) return <p className="text-paper-dim text-sm">Pulling this cycle's numbers…</p>;
+  if (!metrics) return <p className="text-paper-dim text-sm">Pulling this cycle&apos;s numbers…</p>;
 
   const pieData = metrics.status_breakdown
     .filter((s) => s.count > 0)
@@ -48,7 +48,7 @@ export default function DashboardPage() {
       <div className="rounded-xl border border-ink-line bg-ink-raised overflow-hidden">
         <div className="flex flex-col md:flex-row items-stretch">
           <div className="flex-1 p-6 md:p-7">
-            <p className="text-[12px] text-paper-dim mb-2">This cycle's reconciliation run</p>
+            <p className="text-[12px] text-paper-dim mb-2">This cycle&apos;s reconciliation run</p>
             <p className="font-display font-semibold text-paper text-[22px] md:text-[25px] leading-snug max-w-xl">
               <span className="font-ledger tabular text-gold">{formatINR(metrics.total_reconciled_amount)}</span> moved
               through the books across {metrics.total_invoices} vendor invoices —{" "}

@@ -6,7 +6,7 @@ pdfplumber==0.11.9
 rapidfuzz==3.11.0
 
 # Optional (only needed if OPENAI_API_KEY is set to enable the live
-# Vision-LLM extraction path instead of the offline deterministic OCR
+# LLM (text-based) extraction path instead of the offline deterministic OCR
 # fallback). No SDK import is required — parser.py calls the OpenAI
 # REST API directly via urllib, so nothing extra to install here.
 
