@@ -8,8 +8,8 @@ const STAGES = [
   },
   {
     icon: ScanEye,
-    title: "2. Vision-OCR extraction",
-    desc: "GPT-4o Vision (or deterministic OCR fallback) extracts GSTIN, line items, amounts, dates and bank details into a strict JSON schema.",
+    title: "2. LLM / OCR extraction",
+    desc: "GPT-4o (text-based) or deterministic OCR fallback extracts GSTIN, line items, amounts, dates and bank details into a strict JSON schema.",
   },
   {
     icon: GitCompareArrows,

@@ -49,7 +49,7 @@
 > the works."
 
 
-> "Under the hood this either runs through GPT-4o's vision API with a
+> "Under the hood this either runs the extracted text through GPT-4o with a
 > strict JSON schema, or — if there's no API key configured, like in this
 > demo — falls back to a deterministic OCR and regex extractor. Either
 > path, every number that comes out gets re-verified against the raw

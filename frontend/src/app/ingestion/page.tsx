@@ -147,7 +147,7 @@ export default function IngestionPage() {
               {loading ? (
                 <div className="h-full flex items-center justify-center text-paper-dim gap-2 text-[13px]">
                   <Loader2 size={16} className="animate-spin" />
-                  Running Vision-OCR extraction…
+                  Running LLM/OCR extraction…
                 </div>
               ) : extracted ? (
                 <ExtractedFieldsView data={extracted} />

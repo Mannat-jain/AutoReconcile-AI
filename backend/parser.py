@@ -8,10 +8,11 @@ schema.
 Design notes (see docs/ARCHITECTURE.md for the full rationale):
 
 1. Two extraction strategies are supported:
-   - `LLM_VISION` mode: if `OPENAI_API_KEY` is present in the environment,
-     the invoice is rendered to text/base64 and sent to a Vision-LLM
-     (e.g. GPT-4o) with a strict JSON schema prompt (function-calling /
-     `response_format=json_schema`) so the model *cannot* return free text.
+   - `LLM_TEXT` mode: if `OPENAI_API_KEY` is present in the environment,
+     the pdfplumber-extracted text is sent to an LLM (e.g. GPT-4o) with a
+     strict JSON schema prompt (function-calling / `response_format=json_schema`)
+     so the model *cannot* return free text. This is a text-only LLM path,
+     not a vision/image pipeline — see "Known Limitations" below.
    - `DETERMINISTIC_OCR` mode (default / offline demo mode): falls back to
      `pdfplumber` text extraction + regex/heuristic field parsers. This
      keeps the proof-of-concept fully runnable with zero API keys and
@@ -183,7 +184,7 @@ Invoice text:
 """
 
 
-def llm_vision_extract(pdf_path: str) -> ExtractedInvoice:
+def llm_text_extract(pdf_path: str) -> ExtractedInvoice:
     """
     LLM extraction path (sends the pdfplumber text, not page images) (used when OPENAI_API_KEY is configured).
     Sends extracted text to GPT-4o with a strict JSON schema instruction,
@@ -252,7 +253,7 @@ def extract_invoice(pdf_path: str) -> ExtractedInvoice:
     """Public entrypoint — chooses strategy based on environment config."""
     if USE_LLM:
         try:
-            return llm_vision_extract(pdf_path)
+            return llm_text_extract(pdf_path)
         except Exception:
             # Fail safe: never crash the pipeline because of an LLM/network
             # error — degrade gracefully to deterministic OCR extraction.
